@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import MotivationalSummary from "./components/MotivationalSummary";
 import TodayTasks from "./components/TodayTasks";
 import AddTaskForm from "./components/AddTaskForm";
@@ -20,8 +20,8 @@ function App() {
     localStorage.setItem("todo-tasks", JSON.stringify(tasks));
   }, [tasks]);
 
-  // Function to fetch motivational message
-  const fetchMotivationalMessage = async () => {
+  // Function to fetch motivational message (memoized)
+  const fetchMotivationalMessage = useCallback(async () => {
     try {
       setIsLoadingMessage(true);
       setMessageError("");
@@ -35,12 +35,12 @@ function App() {
     } finally {
       setIsLoadingMessage(false);
     }
-  };
+  }, [tasks]);
 
-  // Generate motivational message on component mount
+  // Generate motivational message on component mount and whenever tasks change
   useEffect(() => {
     fetchMotivationalMessage();
-  }, [tasks]);
+  }, [fetchMotivationalMessage]);
 
   const addTask = (taskText) => {
     const newTask = {

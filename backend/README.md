@@ -6,7 +6,7 @@ A secure and scalable RESTful API for the daily todo application with JWT authen
 
 - 🔐 **JWT Authentication** with refresh tokens
 - 📝 **Task Management** with CRUD operations
-- 🤖 **AI-Powered Motivational Summaries** using OpenAI
+- 🤖 **AI-Powered Motivational Summaries** using OpenRouter (LLM)
 - 📊 **Task History & Statistics**
 - 🛡️ **Security Features** (rate limiting, input validation, CORS)
 - 📈 **Productivity Insights** and analytics
@@ -21,7 +21,7 @@ A secure and scalable RESTful API for the daily todo application with JWT authen
 - **Mongoose** - ODM for MongoDB
 - **JWT** - Authentication
 - **bcryptjs** - Password hashing
-- **OpenAI** - AI-powered summaries
+- **OpenRouter** - AI-powered summaries
 - **Joi** - Input validation
 - **Winston** - Logging
 - **Helmet** - Security headers
@@ -31,7 +31,7 @@ A secure and scalable RESTful API for the daily todo application with JWT authen
 
 - Node.js (v16 or higher)
 - MongoDB (local or cloud)
-- OpenAI API key (for AI features)
+- OpenRouter API key (for AI features)
 
 ## Installation
 
@@ -70,9 +70,12 @@ A secure and scalable RESTful API for the daily todo application with JWT authen
    JWT_REFRESH_SECRET=your-refresh-token-secret
    JWT_REFRESH_EXPIRES_IN=7d
 
-   # OpenAI Configuration
-   OPENAI_API_KEY=your-openai-api-key
-   OPENAI_MODEL=gpt-3.5-turbo
+   # OpenRouter Configuration
+   OPENROUTER_API_KEY=your-openrouter-api-key
+   OPENROUTER_MODEL=openrouter/openai/gpt-4o-mini
+   # Optional but recommended for OpenRouter
+   OPENROUTER_REFERER=http://localhost:3000
+   OPENROUTER_TITLE=Infogerm Todo App
 
    # Rate Limiting
    RATE_LIMIT_WINDOW_MS=900000
@@ -202,6 +205,21 @@ curl -X GET http://localhost:5000/api/summary \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
+Response contains:
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "string",
+    "completedTasks": [ { /* ... */ } ],
+    "statistics": { /* ... */ },
+    "predictedTasks": [ { "title": "Plan next X task", "priority": "medium" } ],
+    "date": "YYYY-MM-DD"
+  }
+}
+```
+
 ## Response Format
 
 All API responses follow a consistent format:
@@ -254,8 +272,10 @@ All API responses follow a consistent format:
 | `JWT_EXPIRES_IN`          | JWT expiration time       | 24h                                |
 | `JWT_REFRESH_SECRET`      | Refresh token secret      | Required                           |
 | `JWT_REFRESH_EXPIRES_IN`  | Refresh token expiration  | 7d                                 |
-| `OPENAI_API_KEY`          | OpenAI API key            | Required                           |
-| `OPENAI_MODEL`            | OpenAI model to use       | gpt-3.5-turbo                      |
+| `OPENROUTER_API_KEY`      | OpenRouter API key        | Required                           |
+| `OPENROUTER_MODEL`        | OpenRouter model id       | openrouter/openai/gpt-4o-mini      |
+| `OPENROUTER_REFERER`      | Referrer header (optional)| -                                  |
+| `OPENROUTER_TITLE`        | X-Title header (optional) | -                                  |
 | `RATE_LIMIT_WINDOW_MS`    | Rate limit window         | 900000 (15 min)                    |
 | `RATE_LIMIT_MAX_REQUESTS` | Max requests per window   | 100                                |
 | `CORS_ORIGIN`             | Allowed CORS origin       | http://localhost:3000              |

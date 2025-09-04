@@ -1,12 +1,13 @@
-const OpenAI = require("openai");
+const axios = require("axios");
 const Task = require("../models/Task");
 const { AppError, asyncHandler } = require("../middleware/errorHandler");
 const logger = require("../utils/logger");
 
-// Initialize OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// OpenRouter configuration
+const OPENROUTER_API_URL =
+  process.env.OPENROUTER_API_URL || "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_MODEL =
+  process.env.OPENROUTER_MODEL || "openrouter/openai/gpt-4o-mini";
 
 // @desc    Get motivational summary
 // @route   GET /api/summary
@@ -58,37 +59,71 @@ const getMotivationalSummary = asyncHandler(async (req, res) => {
         ? Math.round((totalActualTime / totalEstimatedTime) * 100)
         : 100;
 
-    // Generate AI prompt
-    const prompt = generateMotivationalPrompt(taskSummaries, {
+    // Generate AI prompt (requests structured JSON)
+    const prompt = generateMotivationalPromptWithPredictions(taskSummaries, {
       totalTasks,
       highPriorityTasks,
       efficiency,
       userName: req.user.firstName || req.user.username,
     });
 
-    // Call OpenAI API
-    const completion = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL || "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: `You are a motivational coach and productivity expert. Your role is to provide personalized, encouraging messages based on a user's completed tasks. Be positive, specific, and actionable. Keep responses under 300 words and use a warm, supportive tone.`,
+    // Call OpenRouter API
+    const response = await axios.post(
+      OPENROUTER_API_URL,
+      {
+        model: OPENROUTER_MODEL,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a motivational coach and productivity expert. Always reply ONLY with strict minified JSON matching the described schema.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        temperature: 0.7,
+        max_tokens: 600,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+          ...(process.env.OPENROUTER_REFERER && {
+            "HTTP-Referer": process.env.OPENROUTER_REFERER,
+          }),
+          ...(process.env.OPENROUTER_TITLE && {
+            "X-Title": process.env.OPENROUTER_TITLE,
+          }),
         },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      max_tokens: 500,
-      temperature: 0.7,
-    });
+        timeout: 15000,
+      }
+    );
 
-    const aiMessage = completion.choices[0].message.content;
+    const content = response.data?.choices?.[0]?.message?.content || "";
+
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e) {
+      // Try to extract JSON substring if model added prose
+      const match = content.match(/\{[\s\S]*\}$/);
+      if (match) {
+        parsed = JSON.parse(match[0]);
+      }
+    }
+
+    const aiMessage = parsed?.summary || parsed?.message ||
+      generateFallbackMessage(completedTasks, req.user.firstName || req.user.username);
+    const predictedTasks = Array.isArray(parsed?.predictedTasks)
+      ? parsed.predictedTasks
+      : generateSimplePredictions(completedTasks);
 
     logger.info("Motivational summary generated successfully", {
       userId: req.user._id,
       taskCount: totalTasks,
-      aiModel: process.env.OPENAI_MODEL || "gpt-3.5-turbo",
+      aiModel: OPENROUTER_MODEL,
     });
 
     res.status(200).json({
@@ -103,6 +138,7 @@ const getMotivationalSummary = asyncHandler(async (req, res) => {
           totalEstimatedTime,
           totalActualTime,
         },
+        predictedTasks,
         date: new Date(Date.now() - 24 * 60 * 60 * 1000)
           .toISOString()
           .split("T")[0],
@@ -114,7 +150,8 @@ const getMotivationalSummary = asyncHandler(async (req, res) => {
     // If AI service fails, provide a fallback message
     if (
       error.code === "insufficient_quota" ||
-      error.code === "rate_limit_exceeded"
+      error.code === "rate_limit_exceeded" ||
+      error.response?.status === 429
     ) {
       return res.status(503).json({
         error: "AI service temporarily unavailable",
@@ -124,7 +161,7 @@ const getMotivationalSummary = asyncHandler(async (req, res) => {
       });
     }
 
-    if (error.code === "invalid_api_key") {
+    if (error.code === "invalid_api_key" || error.response?.status === 401) {
       return res.status(503).json({
         error: "AI service configuration error",
         message:
@@ -152,6 +189,7 @@ const getMotivationalSummary = asyncHandler(async (req, res) => {
           tags: task.tags,
         })),
         taskCount: completedTasks.length,
+        predictedTasks: generateSimplePredictions(completedTasks),
         date: new Date(Date.now() - 24 * 60 * 60 * 1000)
           .toISOString()
           .split("T")[0],
@@ -194,6 +232,14 @@ Please provide a personalized motivational message that:
 Keep it positive, specific, and actionable.`;
 };
 
+// Prompt that requests strict JSON with predictions
+const generateMotivationalPromptWithPredictions = (tasks, stats) => {
+  const base = generateMotivationalPrompt(tasks, stats);
+  return `${base}\n\nReturn a strict minified JSON object with keys: 
+{"summary": string, "predictedTasks": [{"title": string, "priority": "low"|"medium"|"high"|"urgent"}]}. 
+Do not include any extra text before or after the JSON.`;
+};
+
 // Generate fallback message when AI is unavailable
 const generateFallbackMessage = (tasks, userName) => {
   if (tasks.length === 0) {
@@ -218,6 +264,33 @@ const generateFallbackMessage = (tasks, userName) => {
   message += `. Your dedication to productivity is inspiring! Keep up this momentum today and remember that every completed task brings you closer to your goals. You've got this!`;
 
   return message;
+};
+
+// Simple local prediction fallback based on tags and priorities
+const generateSimplePredictions = (completedTasks) => {
+  const tagCounts = {};
+  completedTasks.forEach((t) => {
+    (t.tags || []).forEach((tag) => {
+      tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+    });
+  });
+  const topTags = Object.entries(tagCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([tag]) => tag);
+
+  const suggestions = [
+    ...topTags.map((tag) => ({
+      title: `Plan next ${tag} task`,
+      priority: "medium",
+    })),
+  ];
+
+  if (suggestions.length === 0) {
+    suggestions.push({ title: "Plan your top priority task", priority: "high" });
+  }
+
+  return suggestions.slice(0, 5);
 };
 
 // @desc    Get weekly summary

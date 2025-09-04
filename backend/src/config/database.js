@@ -3,11 +3,20 @@ const logger = require("../utils/logger");
 
 const connectDB = async () => {
   try {
+    // Determine MongoDB URI
     const mongoURI =
       process.env.NODE_ENV === "production"
         ? process.env.MONGODB_URI_PROD
         : process.env.MONGODB_URI || "mongodb://localhost:27017/todo_app";
 
+    // Throw error if URI is missing
+    if (!mongoURI) {
+      throw new Error(
+        "MongoDB URI is not defined. Set MONGODB_URI or MONGODB_URI_PROD in environment variables."
+      );
+    }
+
+    // Connect to MongoDB
     const conn = await mongoose.connect(mongoURI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
